@@ -18,8 +18,8 @@ mongoose.connect(process.env.MONGO_URI)
 
 const PAYU_KEY = process.env.PAYU_KEY;
 const PAYU_SALT = process.env.PAYU_SALT;
-// Remember to change this to 'https://secure.payu.in/_payment' when you are ready for real money!
-const PAYU_URL = 'https://test.payu.in/_payment'; 
+// Remember to change this to 'https://secure.payu.in/_payment' when you are ready for real money! https://test.payu.in/_payment testing
+const PAYU_URL = 'https://secure.payu.in/_payment'; 
 
 // === NEW: DYNAMIC URLS ===
 // If these are not in .env, it defaults to localhost for testing
@@ -145,7 +145,6 @@ app.delete('/api/menu/:id', async (req, res) => {
         res.status(500).json({ error: 'Failed to delete menu item' });
     }
 });
-
 // Update a Menu Item (Admin Dashboard)
 app.put('/api/menu/:id', async (req, res) => {
     try {
