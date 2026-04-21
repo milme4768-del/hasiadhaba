@@ -146,5 +146,22 @@ app.delete('/api/menu/:id', async (req, res) => {
     }
 });
 
+// Update a Menu Item (Admin Dashboard)
+app.put('/api/menu/:id', async (req, res) => {
+    try {
+        // We find and update by your custom "id" field (e.g., 's1', 'item_1234')
+        const updatedItem = await MenuItem.findOneAndUpdate(
+            { id: req.params.id },
+            req.body,
+            { new: true } // Returns the updated document
+        );
+        
+        if (!updatedItem) return res.status(404).json({ error: 'Item not found' });
+        res.json(updatedItem);
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to update menu item' });
+    }
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
