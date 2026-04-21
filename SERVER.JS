@@ -1,7 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const crypto = require('crypto'); // REQUIRED FOR PAYU HASHING
+const crypto = require('crypto');
 require('dotenv').config();
 
 const MenuItem = require('./models/MenuItem');
@@ -9,19 +9,22 @@ const Order = require('./models/Order');
 
 const app = express();
 app.use(cors());
-// PayU sends URL-encoded data on success, so we need this to read it:
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// MongoDB Connection
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('Connected to MongoDB'))
     .catch(err => console.error('MongoDB connection error:', err));
 
-// --- SECURE PAYU CREDENTIALS FROM .ENV ---
 const PAYU_KEY = process.env.PAYU_KEY;
 const PAYU_SALT = process.env.PAYU_SALT;
-const PAYU_URL = 'https://test.payu.in/_payment'; // Use 'https://test.payu.in/_payment' for testing 'https://secure.payu.in/_payment' for live
+// Remember to change this to 'https://secure.payu.in/_payment' when you are ready for real money!
+const PAYU_URL = 'https://test.payu.in/_payment'; 
+
+// === NEW: DYNAMIC URLS ===
+// If these are not in .env, it defaults to localhost for testing
+const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:5000';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://127.0.0.1:5500';
 
 // --- API ROUTES ---
 
@@ -39,10 +42,8 @@ app.get('/api/menu', async (req, res) => {
     }
 });
 
-// 1. INITIATE PAYMENT (Generates Hash and creates hidden order)
 app.post('/api/payu/initiate', async (req, res) => {
     try {
-        // Save order as 'Awaiting_Payment'. Kitchen will NOT see this yet.
         const orderData = { ...req.body, status: 'Awaiting_Payment' };
         const newOrder = new Order(orderData);
         const savedOrder = await newOrder.save();
@@ -50,11 +51,10 @@ app.post('/api/payu/initiate', async (req, res) => {
         const txnid = savedOrder._id.toString(); 
         const amount = savedOrder.totalAmount;
         const productinfo = 'Taraaang Order';
-        const firstname = savedOrder.customer.name.replace(/\s/g, ''); // Remove spaces to prevent PayU errors
-        const email = 'guest@taraaang.com'; // PayU requires an email field
+        const firstname = savedOrder.customer.name.replace(/\s/g, ''); 
+        const email = 'guest@taraaang.com'; 
         const phone = savedOrder.customer.phone;
 
-        // Formula: key|txnid|amount|productinfo|firstname|email|||||||||||SALT
         const hashString = `${PAYU_KEY}|${txnid}|${amount}|${productinfo}|${firstname}|${email}|||||||||||${PAYU_SALT}`;
         const hash = crypto.createHash('sha512').update(hashString).digest('hex');
 
@@ -67,9 +67,9 @@ app.post('/api/payu/initiate', async (req, res) => {
             email: email,
             phone: phone,
             hash: hash,
-            // IMPORTANT: Change this port/IP to match where your frontend runs!
-            surl: 'http://localhost:5000/api/payu/success',
-            furl: 'http://localhost:5000/api/payu/fail'
+            // Uses dynamic Backend URL
+            surl: `${BACKEND_URL}/api/payu/success`,
+            furl: `${BACKEND_URL}/api/payu/fail`
         });
     } catch (error) {
         console.error(error);
@@ -77,34 +77,28 @@ app.post('/api/payu/initiate', async (req, res) => {
     }
 });
 
-// 2. PAYU SUCCESS ROUTE
 app.post('/api/payu/success', async (req, res) => {
     try {
         const { txnid, status } = req.body;
-        
         if (status === 'success') {
-            // Payment success! Change status to 'Pending' so it shows on Admin Dashboard
             await Order.findByIdAndUpdate(txnid, { status: 'Pending' });
-            
-            // Redirect customer back to their app to track the order
-            res.redirect(`http://127.0.0.1:5500/index.html?order_success=true&order_id=${txnid}`);
+            // Uses dynamic Frontend URL
+            res.redirect(`${FRONTEND_URL}/index.html?order_success=true&order_id=${txnid}`);
         } else {
-            res.redirect(`http://127.0.0.1:5500/index.html?order_failed=true`);
+            res.redirect(`${FRONTEND_URL}/index.html?order_failed=true`);
         }
     } catch (error) {
         res.send("Payment verification failed.");
     }
 });
 
-// 3. PAYU FAILURE ROUTE
 app.post('/api/payu/fail', async (req, res) => {
-    res.redirect(`http://127.0.0.1:5500/index.html?order_failed=true`);
+    // Uses dynamic Frontend URL
+    res.redirect(`${FRONTEND_URL}/index.html?order_failed=true`);
 });
 
-// Admin Dashboard: ONLY fetch orders that are paid for
 app.get('/api/orders/active', async (req, res) => {
     try {
-        // Exclude 'Completed' AND 'Awaiting_Payment'
         const activeOrders = await Order.find({ status: { $nin: ['Completed', 'Awaiting_Payment'] } }).sort({ timestamp: -1 });
         res.json(activeOrders);
     } catch (error) {
