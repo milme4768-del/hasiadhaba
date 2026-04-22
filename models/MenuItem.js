@@ -10,7 +10,12 @@ const menuItemSchema = new mongoose.Schema({
     image: { type: String },
     tag: { type: String },
     // NEW: Added availability toggle (defaults to true)
-    available: { type: Boolean, default: true } 
+    available: { type: Boolean, default: true } ,
+    // NEW: Optional Variants Array
+    variants: [{
+        name: { type: String },
+        price: { type: Number }
+    }]
 });
 
 module.exports = mongoose.model('MenuItem', menuItemSchema);
