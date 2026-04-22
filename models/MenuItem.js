@@ -8,7 +8,9 @@ const menuItemSchema = new mongoose.Schema({
     veg: { type: Boolean, required: true, default: true },
     desc: { type: String },
     image: { type: String },
-    tag: { type: String }
+    tag: { type: String },
+    // NEW: Added availability toggle (defaults to true)
+    available: { type: Boolean, default: true } 
 });
 
 module.exports = mongoose.model('MenuItem', menuItemSchema);
