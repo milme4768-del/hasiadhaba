@@ -13,8 +13,9 @@ const orderSchema = new mongoose.Schema({
         quantity: Number,
         subtotal: Number
     }],
-    totalAmount: { type: Number, required: true },
-    // ADDED 'Awaiting_Payment' to the enum
+    subTotal: { type: Number, required: true },     // NEW
+    gstAmount: { type: Number, required: true },    // NEW
+    totalAmount: { type: Number, required: true },  // This is now Subtotal + GST
     status: { type: String, default: 'Awaiting_Payment', enum: ['Awaiting_Payment', 'Pending', 'Preparing', 'Ready', 'Completed'] },
     timestamp: { type: Date, default: Date.now }
 });
