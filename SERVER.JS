@@ -1,7 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const crypto = require('crypto');
+const crypto = require('crypto'); // REQUIRED FOR PAYU HASHING
 require('dotenv').config();
 
 const MenuItem = require('./models/MenuItem');
@@ -9,20 +9,21 @@ const Order = require('./models/Order');
 
 const app = express();
 app.use(cors());
+// PayU sends URL-encoded data on success, so we need this to read it:
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
+// MongoDB Connection
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('Connected to MongoDB'))
     .catch(err => console.error('MongoDB connection error:', err));
 
+// --- SECURE PAYU CREDENTIALS FROM .ENV ---
 const PAYU_KEY = process.env.PAYU_KEY;
 const PAYU_SALT = process.env.PAYU_SALT;
-// Remember to change this to 'https://secure.payu.in/_payment' when you are ready for real money! https://test.payu.in/_payment testing
-const PAYU_URL = 'https://secure.payu.in/_payment'; 
+const PAYU_URL = 'https://secure.payu.in/_payment'; // https://secure.payu.in/_payment LIVE URL, https://test.payu.in/_payment test url
 
-// === NEW: DYNAMIC URLS ===
-// If these are not in .env, it defaults to localhost for testing
+// === DYNAMIC URLS ===
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:5000';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://127.0.0.1:5500';
 
@@ -42,6 +43,7 @@ app.get('/api/menu', async (req, res) => {
     }
 });
 
+// 1. INITIATE PAYMENT (Generates Hash and creates hidden order)
 app.post('/api/payu/initiate', async (req, res) => {
     try {
         const orderData = { ...req.body, status: 'Awaiting_Payment' };
@@ -51,10 +53,11 @@ app.post('/api/payu/initiate', async (req, res) => {
         const txnid = savedOrder._id.toString(); 
         const amount = savedOrder.totalAmount;
         const productinfo = 'Taraaang Order';
-        const firstname = savedOrder.customer.name.replace(/\s/g, ''); 
+        const firstname = savedOrder.customer.name.replace(/\s/g, ''); // Remove spaces
         const email = 'guest@taraaang.com'; 
         const phone = savedOrder.customer.phone;
 
+        // Forward Hash Formula: key|txnid|amount|productinfo|firstname|email|||||||||||SALT
         const hashString = `${PAYU_KEY}|${txnid}|${amount}|${productinfo}|${firstname}|${email}|||||||||||${PAYU_SALT}`;
         const hash = crypto.createHash('sha512').update(hashString).digest('hex');
 
@@ -67,7 +70,6 @@ app.post('/api/payu/initiate', async (req, res) => {
             email: email,
             phone: phone,
             hash: hash,
-            // Uses dynamic Backend URL
             surl: `${BACKEND_URL}/api/payu/success`,
             furl: `${BACKEND_URL}/api/payu/fail`
         });
@@ -77,33 +79,58 @@ app.post('/api/payu/initiate', async (req, res) => {
     }
 });
 
+// 2. PAYU SUCCESS ROUTE (NOW SECURE)
 app.post('/api/payu/success', async (req, res) => {
     try {
-        const { txnid, status } = req.body;
+        // PayU sends all these details back. We MUST verify them.
+        const { txnid, status, amount, productinfo, firstname, email, hash } = req.body;
+        
+        // 🚨 SECURITY CHECK: Generate the Reverse Hash
+        // Formula: SALT|status|||||||||||email|firstname|productinfo|amount|txnid|key
+        const reverseHashString = `${PAYU_SALT}|${status}|||||||||||${email}|${firstname}|${productinfo}|${amount}|${txnid}|${PAYU_KEY}`;
+        const expectedHash = crypto.createHash('sha512').update(reverseHashString).digest('hex');
+
+        // Check if the hash PayU sent matches our calculation
+        if (hash !== expectedHash) {
+            console.error(`🚨 PAYMENT HACK ATTEMPT DETECTED FOR ORDER ${txnid} 🚨`);
+            return res.redirect(`${FRONTEND_URL}/index.html?order_failed=true`);
+        }
+
+        // If the hash matches AND status is success, it is 100% legitimate!
         if (status === 'success') {
             await Order.findByIdAndUpdate(txnid, { status: 'Pending' });
-            // Uses dynamic Frontend URL
             res.redirect(`${FRONTEND_URL}/index.html?order_success=true&order_id=${txnid}`);
         } else {
             res.redirect(`${FRONTEND_URL}/index.html?order_failed=true`);
         }
     } catch (error) {
+        console.error("Success Route Error:", error);
         res.send("Payment verification failed.");
     }
 });
 
+// 3. PAYU FAILURE ROUTE
 app.post('/api/payu/fail', async (req, res) => {
-    // Uses dynamic Frontend URL
     res.redirect(`${FRONTEND_URL}/index.html?order_failed=true`);
 });
 
+// --- ADMIN DASHBOARD ROUTES ---
 app.get('/api/orders/active', async (req, res) => {
     try {
         const activeOrders = await Order.find({ status: { $nin: ['Completed', 'Awaiting_Payment'] } }).sort({ timestamp: -1 });
         res.json(activeOrders);
     } catch (error) {
-        console.error("🚨 DATABASE ERROR FETCHING ORDERS:", error);
-        res.status(500).json({ error: 'Failed to fetch orders', details: error.message });
+        res.status(500).json({ error: 'Failed to fetch orders' });
+    }
+});
+
+// Get ALL Completed Orders for the Sales Report
+app.get('/api/orders/completed', async (req, res) => {
+    try {
+        const completedOrders = await Order.find({ status: 'Completed' }).sort({ timestamp: -1 });
+        res.json(completedOrders);
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch completed orders' });
     }
 });
 
@@ -145,22 +172,17 @@ app.delete('/api/menu/:id', async (req, res) => {
         res.status(500).json({ error: 'Failed to delete menu item' });
     }
 });
-// Update a Menu Item (Admin Dashboard)
+
 app.put('/api/menu/:id', async (req, res) => {
     try {
-        // We find and update by your custom "id" field (e.g., 's1', 'item_1234')
-        const updatedItem = await MenuItem.findOneAndUpdate(
-            { id: req.params.id },
-            req.body,
-            { new: true } // Returns the updated document
-        );
-        
+        const updatedItem = await MenuItem.findOneAndUpdate({ id: req.params.id }, req.body, { new: true });
         if (!updatedItem) return res.status(404).json({ error: 'Item not found' });
         res.json(updatedItem);
     } catch (error) {
         res.status(500).json({ error: 'Failed to update menu item' });
     }
 });
+
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
