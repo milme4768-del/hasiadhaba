@@ -114,6 +114,20 @@ app.post('/api/payu/fail', async (req, res) => {
     res.redirect(`${FRONTEND_URL}/index.html?order_failed=true`);
 });
 
+
+// 🚨 NEW ROUTE ADDED HERE: DIRECT CASH ORDER (For Admin POS System) 🚨
+app.post('/api/orders', async (req, res) => {
+    try {
+        const newOrder = new Order(req.body);
+        const savedOrder = await newOrder.save();
+        res.status(201).json({ message: 'Order placed successfully', orderId: savedOrder._id });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Failed to place direct cash order' });
+    }
+});
+
+
 // --- ADMIN DASHBOARD ROUTES ---
 app.get('/api/orders/active', async (req, res) => {
     try {
