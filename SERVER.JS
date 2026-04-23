@@ -21,7 +21,7 @@ mongoose.connect(process.env.MONGO_URI)
 // --- SECURE PAYU CREDENTIALS FROM .ENV ---
 const PAYU_KEY = process.env.PAYU_KEY;
 const PAYU_SALT = process.env.PAYU_SALT;
-const PAYU_URL = 'https://secure.payu.in/_payment'; // https://secure.payu.in/_payment LIVE URL, https://test.payu.in/_payment test url
+const PAYU_URL = 'https://secure.payu.in/_payment';  // test - https://test.payu.in/_payment live - https://secure.payu.in/_payment
 
 // === DYNAMIC URLS ===
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:5000';
@@ -31,7 +31,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://127.0.0.1:5500';
 
 app.get('/api/menu', async (req, res) => {
     try {
-        const items = await MenuItem.find();
+        const items = await MenuItem.find().sort({ sortOrder: 1 });
         const formattedMenu = {
             starters: items.filter(i => i.category === 'starters'),
             main: items.filter(i => i.category === 'main'),
@@ -53,11 +53,10 @@ app.post('/api/payu/initiate', async (req, res) => {
         const txnid = savedOrder._id.toString(); 
         const amount = savedOrder.totalAmount;
         const productinfo = 'Taraaang Order';
-        const firstname = savedOrder.customer.name.replace(/\s/g, ''); // Remove spaces
+        const firstname = savedOrder.customer.name.replace(/\s/g, ''); 
         const email = 'guest@taraaang.com'; 
         const phone = savedOrder.customer.phone;
 
-        // Forward Hash Formula: key|txnid|amount|productinfo|firstname|email|||||||||||SALT
         const hashString = `${PAYU_KEY}|${txnid}|${amount}|${productinfo}|${firstname}|${email}|||||||||||${PAYU_SALT}`;
         const hash = crypto.createHash('sha512').update(hashString).digest('hex');
 
@@ -82,21 +81,16 @@ app.post('/api/payu/initiate', async (req, res) => {
 // 2. PAYU SUCCESS ROUTE (NOW SECURE)
 app.post('/api/payu/success', async (req, res) => {
     try {
-        // PayU sends all these details back. We MUST verify them.
         const { txnid, status, amount, productinfo, firstname, email, hash } = req.body;
         
-        // 🚨 SECURITY CHECK: Generate the Reverse Hash
-        // Formula: SALT|status|||||||||||email|firstname|productinfo|amount|txnid|key
         const reverseHashString = `${PAYU_SALT}|${status}|||||||||||${email}|${firstname}|${productinfo}|${amount}|${txnid}|${PAYU_KEY}`;
         const expectedHash = crypto.createHash('sha512').update(reverseHashString).digest('hex');
 
-        // Check if the hash PayU sent matches our calculation
         if (hash !== expectedHash) {
             console.error(`🚨 PAYMENT HACK ATTEMPT DETECTED FOR ORDER ${txnid} 🚨`);
             return res.redirect(`${FRONTEND_URL}/index.html?order_failed=true`);
         }
 
-        // If the hash matches AND status is success, it is 100% legitimate!
         if (status === 'success') {
             await Order.findByIdAndUpdate(txnid, { status: 'Pending' });
             res.redirect(`${FRONTEND_URL}/index.html?order_success=true&order_id=${txnid}`);
@@ -114,8 +108,7 @@ app.post('/api/payu/fail', async (req, res) => {
     res.redirect(`${FRONTEND_URL}/index.html?order_failed=true`);
 });
 
-
-// 🚨 NEW ROUTE ADDED HERE: DIRECT CASH ORDER (For Admin POS System) 🚨
+// DIRECT CASH ORDER (For Admin POS System)
 app.post('/api/orders', async (req, res) => {
     try {
         const newOrder = new Order(req.body);
@@ -126,7 +119,6 @@ app.post('/api/orders', async (req, res) => {
         res.status(500).json({ error: 'Failed to place direct cash order' });
     }
 });
-
 
 // --- ADMIN DASHBOARD ROUTES ---
 app.get('/api/orders/active', async (req, res) => {
@@ -168,6 +160,27 @@ app.put('/api/orders/:id/status', async (req, res) => {
     }
 });
 
+
+// 🚨 NEW ROUTE: BULK REORDER MENU ITEMS VIA DRAG & DROP 🚨
+app.put('/api/menu/reorder', async (req, res) => {
+    try {
+        const { items } = req.body;
+        // Use MongoDB bulkWrite to update all items at once for maximum speed
+        const bulkOps = items.map(item => ({
+            updateOne: {
+                filter: { id: item.id },
+                update: { sortOrder: item.sortOrder }
+            }
+        }));
+        await MenuItem.bulkWrite(bulkOps);
+        res.json({ message: 'Menu reordered successfully' });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Failed to reorder menu items' });
+    }
+});
+
+
 app.post('/api/menu', async (req, res) => {
     try {
         const newItem = new MenuItem(req.body);
@@ -196,7 +209,6 @@ app.put('/api/menu/:id', async (req, res) => {
         res.status(500).json({ error: 'Failed to update menu item' });
     }
 });
-
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
